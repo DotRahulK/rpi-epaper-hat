@@ -135,7 +135,9 @@ def _map_axis(value: int, min_value: int, max_value: int, size: int) -> int:
     return int((value - min_value) * (size - 1) / (max_value - min_value))
 
 
-def _touch_loop(components: Iterable[Component], width: int, height: int) -> None:
+def _touch_loop(
+    components: Iterable[Component], width: int, height: int, needs_rotate: bool
+) -> None:
     try:
         from evdev import InputDevice, ecodes
     except ImportError:
@@ -148,27 +150,44 @@ def _touch_loop(components: Iterable[Component], width: int, height: int) -> Non
         return
 
     dev = InputDevice(device_path)
-    abs_x = dev.absinfo(ecodes.ABS_X) if dev.capabilities().get(ecodes.EV_ABS) else None
-    abs_y = dev.absinfo(ecodes.ABS_Y) if dev.capabilities().get(ecodes.EV_ABS) else None
+    abs_caps = dev.capabilities().get(ecodes.EV_ABS)
+    abs_x = dev.absinfo(ecodes.ABS_X) if abs_caps else None
+    abs_y = dev.absinfo(ecodes.ABS_Y) if abs_caps else None
+    abs_mx = dev.absinfo(ecodes.ABS_MT_POSITION_X) if abs_caps else None
+    abs_my = dev.absinfo(ecodes.ABS_MT_POSITION_Y) if abs_caps else None
 
     x = 0
     y = 0
+    touching = False
     print(f"Listening for touches on {device_path} ...")
     for event in dev.read_loop():
         if event.type == ecodes.EV_ABS:
-            if event.code == ecodes.ABS_X and abs_x:
+            if event.code == ecodes.ABS_MT_POSITION_X and abs_mx:
+                x = _map_axis(event.value, abs_mx.min, abs_mx.max, width)
+            elif event.code == ecodes.ABS_MT_POSITION_Y and abs_my:
+                y = _map_axis(event.value, abs_my.min, abs_my.max, height)
+            elif event.code == ecodes.ABS_X and abs_x:
                 x = _map_axis(event.value, abs_x.min, abs_x.max, width)
             elif event.code == ecodes.ABS_Y and abs_y:
                 y = _map_axis(event.value, abs_y.min, abs_y.max, height)
+            elif event.code == ecodes.ABS_MT_TRACKING_ID:
+                touching = event.value >= 0
         elif event.type == ecodes.EV_KEY and event.code == ecodes.BTN_TOUCH:
-            if event.value == 1:
-                for component in components:
-                    x0, y0, x1, y1 = component.box
-                    if x0 <= x <= x1 and y0 <= y <= y1:
-                        print(f"Touched: {component.name} ({x}, {y})")
-                        break
-                else:
-                    print(f"Touched: background ({x}, {y})")
+            touching = event.value == 1
+        elif event.type == ecodes.EV_SYN and event.code == ecodes.SYN_REPORT:
+            if not touching:
+                continue
+            touch_x, touch_y = x, y
+            if needs_rotate and (abs_x or abs_mx) and (abs_y or abs_my):
+                # Rotate raw portrait touch coords into landscape coordinates.
+                touch_x, touch_y = y, (width - 1 - x)
+            for component in components:
+                x0, y0, x1, y1 = component.box
+                if x0 <= touch_x <= x1 and y0 <= touch_y <= y1:
+                    print(f"Touched: {component.name} ({touch_x}, {touch_y})")
+                    break
+            else:
+                print(f"Touched: background ({touch_x}, {touch_y})")
 
 
 def main() -> None:
@@ -190,7 +209,7 @@ def main() -> None:
         image = image.rotate(90, expand=True)
     epd.display(epd.getbuffer(image))
     try:
-        _touch_loop(components, image.width, image.height)
+        _touch_loop(components, image.width, image.height, needs_rotate)
     except KeyboardInterrupt:
         pass
     finally:
