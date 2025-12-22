@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from time import sleep
+import os
 from typing import Iterable, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
@@ -117,6 +118,9 @@ def _render_layout(epd) -> Tuple[Image.Image, Iterable[Component], bool]:
 
 def _find_touch_device() -> Optional[str]:
     import glob
+    env_path = os.environ.get("TOUCH_DEVICE")
+    if env_path:
+        return env_path
     matches = glob.glob("/dev/input/by-path/*-event-touchscreen")
     if matches:
         return matches[0]
