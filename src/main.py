@@ -6,12 +6,12 @@ from time import sleep
 
 from PIL import Image, ImageDraw, ImageFont
 
-from config import EPD_MODEL
-from epd_driver import load_epd_driver
+from config import EPD_MODEL_CANDIDATES
+from epd_driver import _load_epd_driver_candidates
 
 
 def main() -> None:
-    epd = load_epd_driver(EPD_MODEL)
+    epd = _load_epd_driver_candidates(EPD_MODEL_CANDIDATES)
     try:
         epd.init()
     except TypeError:
