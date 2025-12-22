@@ -159,8 +159,11 @@ def _touch_loop(
     x = 0
     y = 0
     touching = False
+    debug_raw = os.environ.get("DEBUG_TOUCH") == "1"
     print(f"Listening for touches on {device_path} ...")
     for event in dev.read_loop():
+        if debug_raw:
+            print(event)
         if event.type == ecodes.EV_ABS:
             if event.code == ecodes.ABS_MT_POSITION_X and abs_mx:
                 x = _map_axis(event.value, abs_mx.min, abs_mx.max, width)
