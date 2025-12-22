@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from time import sleep
 
+from PIL import Image, ImageDraw, ImageFont
+
 from config import EPD_MODEL
 from epd_driver import load_epd_driver
 
@@ -21,7 +23,14 @@ def main() -> None:
         else:
             raise
     epd.Clear(0xFF)
-    # Placeholder: show nothing, then sleep so you can see it initialized.
+
+    image = Image.new("1", (epd.width, epd.height), 255)
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+    draw.rectangle((0, 0, epd.width - 1, epd.height - 1), outline=0)
+    draw.text((10, 10), "Hello, Waveshare!", font=font, fill=0)
+
+    epd.display(epd.getbuffer(image))
     sleep(2)
     epd.sleep()
 
