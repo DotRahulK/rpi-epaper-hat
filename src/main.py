@@ -10,7 +10,16 @@ from epd_driver import load_epd_driver
 
 def main() -> None:
     epd = load_epd_driver(EPD_MODEL)
-    epd.init()
+    try:
+        epd.init()
+    except TypeError:
+        # Some Waveshare drivers require a LUT argument for init().
+        if hasattr(epd, "lut_full_update"):
+            epd.init(epd.lut_full_update)
+        elif hasattr(epd, "LUT_FULL_UPDATE"):
+            epd.init(epd.LUT_FULL_UPDATE)
+        else:
+            raise
     epd.Clear(0xFF)
     # Placeholder: show nothing, then sleep so you can see it initialized.
     sleep(2)
