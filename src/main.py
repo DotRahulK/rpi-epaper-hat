@@ -59,7 +59,7 @@ def _landscape_image(epd) -> Tuple[Image.Image, int, int, bool]:
     return Image.new("1", (epd.height, epd.width), 255), epd.height, epd.width, True
 
 
-def _render_layout(epd) -> Tuple[Image.Image, Iterable[Component], bool]:
+def _render_layout(epd, is_playing: bool) -> Tuple[Image.Image, Iterable[Component], bool]:
     image, width, height, needs_rotate = _landscape_image(epd)
     draw = ImageDraw.Draw(image)
 
@@ -87,10 +87,10 @@ def _render_layout(epd) -> Tuple[Image.Image, Iterable[Component], bool]:
     draw.text((right_x0, margin), title, font=title_font, fill=0)
     draw.text((right_x0, margin + 22), artist, font=artist_font, fill=0)
 
-    button_width = right_width
     button_height = 22
     button_gap = 6
     buttons_top = margin + 44
+    button_width = int((right_width - 2 * button_gap) / 3)
 
     play_box = (
         right_x0,
@@ -99,19 +99,20 @@ def _render_layout(epd) -> Tuple[Image.Image, Iterable[Component], bool]:
         buttons_top + button_height,
     )
     next_box = (
-        right_x0,
-        buttons_top + button_height + button_gap,
-        right_x0 + button_width,
-        buttons_top + 2 * button_height + button_gap,
+        right_x0 + button_width + button_gap,
+        buttons_top,
+        right_x0 + 2 * button_width + button_gap,
+        buttons_top + button_height,
     )
     like_box = (
-        right_x0,
-        buttons_top + 2 * (button_height + button_gap),
-        right_x0 + button_width,
-        buttons_top + 3 * button_height + 2 * button_gap,
+        right_x0 + 2 * (button_width + button_gap),
+        buttons_top,
+        right_x0 + 3 * button_width + 2 * button_gap,
+        buttons_top + button_height,
     )
 
-    for label, box in [("Play/Pause", play_box), ("Next", next_box), ("Like", like_box)]:
+    play_label = "||" if is_playing else ">"
+    for label, box in [(play_label, play_box), (">>", next_box), ("O+", like_box)]:
         draw.rounded_rectangle(box, radius=4, outline=0, width=1)
         text = _fit_text(draw, label, artist_font, button_width - 8)
         draw.text((box[0] + 4, box[1] + 4), text, font=artist_font, fill=0)
@@ -278,7 +279,7 @@ def main() -> None:
             raise
     epd.Clear(0xFF)
 
-    image, components, needs_rotate = _render_layout(epd)
+    image, components, needs_rotate = _render_layout(epd, is_playing=False)
     if needs_rotate:
         image = image.rotate(90, expand=True)
     epd.display(epd.getbuffer(image))
