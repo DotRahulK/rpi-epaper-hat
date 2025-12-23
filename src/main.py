@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import BytesIO
 from time import sleep
 import os
+import queue
+import threading
+import time
 from typing import Iterable, Optional, Tuple
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from config import (
     EPD_MODEL_CANDIDATES,
@@ -59,7 +63,19 @@ def _landscape_image(epd) -> Tuple[Image.Image, int, int, bool]:
     return Image.new("1", (epd.height, epd.width), 255), epd.height, epd.width, True
 
 
-def _render_layout(epd, is_playing: bool) -> Tuple[Image.Image, Iterable[Component], bool]:
+def _fit_album_art(art: Image.Image, size: int) -> Image.Image:
+    art = art.convert("L")
+    art = ImageOps.fit(art, (size, size), method=Image.LANCZOS)
+    return art.convert("1")
+
+
+def _render_layout(
+    epd,
+    title: str,
+    artist: str,
+    art: Optional[Image.Image],
+    is_playing: bool,
+) -> Tuple[Image.Image, Iterable[Component], bool]:
     image, width, height, needs_rotate = _landscape_image(epd)
     draw = ImageDraw.Draw(image)
 
@@ -70,10 +86,14 @@ def _render_layout(epd, is_playing: bool) -> Tuple[Image.Image, Iterable[Compone
     left_x1 = left_x0 + image_size
     left_y1 = left_y0 + image_size
 
-    # Placeholder square image.
-    draw.rectangle((left_x0, left_y0, left_x1, left_y1), outline=0, width=1)
-    draw.line((left_x0, left_y0, left_x1, left_y1), fill=0, width=1)
-    draw.line((left_x0, left_y1, left_x1, left_y0), fill=0, width=1)
+    if art:
+        art = _fit_album_art(art, image_size)
+        image.paste(art, (left_x0, left_y0))
+    else:
+        # Placeholder square image.
+        draw.rectangle((left_x0, left_y0, left_x1, left_y1), outline=0, width=1)
+        draw.line((left_x0, left_y0, left_x1, left_y1), fill=0, width=1)
+        draw.line((left_x0, left_y1, left_x1, left_y0), fill=0, width=1)
 
     right_x0 = left_x1 + margin
     right_x1 = width - margin
@@ -81,8 +101,8 @@ def _render_layout(epd, is_playing: bool) -> Tuple[Image.Image, Iterable[Compone
 
     title_font = _load_font(18)
     artist_font = _load_font(12)
-    title = _fit_text(draw, "Your Song Title Goes Here", title_font, right_width)
-    artist = _fit_text(draw, "Artist Name", artist_font, right_width)
+    title = _fit_text(draw, title, title_font, right_width)
+    artist = _fit_text(draw, artist, artist_font, right_width)
 
     draw.text((right_x0, margin), title, font=title_font, fill=0)
     draw.text((right_x0, margin + 22), artist, font=artist_font, fill=0)
@@ -223,7 +243,11 @@ def _map_axis(value: int, min_value: Optional[int], max_value: Optional[int], si
 
 
 def _touch_loop_evdev(
-    components: Iterable[Component], width: int, height: int, needs_rotate: bool
+    components: Iterable[Component],
+    width: int,
+    height: int,
+    needs_rotate: bool,
+    event_queue: "queue.Queue[str]",
 ) -> None:
     try:
         from evdev import InputDevice, ecodes
@@ -274,15 +298,19 @@ def _touch_loop_evdev(
             for component in components:
                 x0, y0, x1, y1 = component.box
                 if x0 <= touch_x <= x1 and y0 <= touch_y <= y1:
-                    print(f"Touched: {component.name} ({touch_x}, {touch_y})")
+                    event_queue.put(component.name)
                     break
             else:
-                print(f"Touched: background ({touch_x}, {touch_y})")
+                pass
 
 
 
 def _touch_loop_gt1151(
-    components: Iterable[Component], width: int, height: int, needs_rotate: bool
+    components: Iterable[Component],
+    width: int,
+    height: int,
+    needs_rotate: bool,
+    event_queue: "queue.Queue[str]",
 ) -> None:
     try:
         from touch_gt1151 import GT1151
@@ -317,10 +345,10 @@ def _touch_loop_gt1151(
             for component in components:
                 x0, y0, x1, y1 = component.box
                 if x0 <= touch_x <= x1 and y0 <= touch_y <= y1:
-                    print(f"Touched: {component.name} ({touch_x}, {touch_y})")
+                    event_queue.put(component.name)
                     break
             else:
-                print(f"Touched: background ({touch_x}, {touch_y})")
+                pass
     except KeyboardInterrupt:
         pass
     finally:
@@ -328,15 +356,38 @@ def _touch_loop_gt1151(
 
 
 def _run_touch_loop(
-    components: Iterable[Component], width: int, height: int, needs_rotate: bool
+    components: Iterable[Component],
+    width: int,
+    height: int,
+    needs_rotate: bool,
+    event_queue: "queue.Queue[str]",
 ) -> None:
     if TOUCH_BACKEND.lower() == "gt1151":
-        _touch_loop_gt1151(components, width, height, needs_rotate)
+        _touch_loop_gt1151(components, width, height, needs_rotate, event_queue)
     else:
-        _touch_loop_evdev(components, width, height, needs_rotate)
+        _touch_loop_evdev(components, width, height, needs_rotate, event_queue)
+
+
+def _start_touch_loop(
+    components: Iterable[Component], width: int, height: int, needs_rotate: bool
+) -> "queue.Queue[str]":
+    event_queue: "queue.Queue[str]" = queue.Queue()
+    thread = threading.Thread(
+        target=_run_touch_loop,
+        args=(components, width, height, needs_rotate, event_queue),
+        daemon=True,
+    )
+    thread.start()
+    return event_queue
 
 
 def main() -> None:
+    try:
+        from spotify_client import SpotifyController
+    except ImportError as exc:
+        print(f"Spotify disabled: {exc}")
+        return
+
     epd = _load_epd_driver_candidates(EPD_MODEL_CANDIDATES)
     try:
         epd.init()
@@ -350,12 +401,85 @@ def main() -> None:
             raise
     epd.Clear(0xFF)
 
-    image, components, needs_rotate = _render_layout(epd, is_playing=False)
+    try:
+        spotify = SpotifyController()
+    except Exception as exc:
+        print(f"Spotify disabled: {exc}")
+        return
+
+    title = "Waiting for Spotify..."
+    artist = "Open Spotify on a device"
+    image, components, needs_rotate = _render_layout(
+        epd, title, artist, art=None, is_playing=False
+    )
     if needs_rotate:
         image = image.rotate(90, expand=True)
     epd.display(epd.getbuffer(image))
     try:
-        _run_touch_loop(components, image.width, image.height, needs_rotate)
+        event_queue = _start_touch_loop(components, image.width, image.height, needs_rotate)
+        poll_sec = float(os.environ.get("SPOTIFY_POLL_SEC", "5"))
+        debounce_sec = float(os.environ.get("TOUCH_DEBOUNCE_SEC", "0.35"))
+        last_action: dict[str, float] = {}
+        last_render_key: Optional[Tuple[str, bool, str, str]] = None
+        current_track_id: Optional[str] = None
+        current_art: Optional[Image.Image] = None
+        next_poll = 0.0
+
+        while True:
+            now = time.monotonic()
+            while True:
+                try:
+                    action = event_queue.get_nowait()
+                except queue.Empty:
+                    break
+                last_time = last_action.get(action, 0.0)
+                if now - last_time < debounce_sec:
+                    continue
+                last_action[action] = now
+                if action == "Play/Pause":
+                    spotify.toggle_play_pause()
+                elif action == "Next":
+                    spotify.next_track()
+                elif action == "Like":
+                    spotify.like_current()
+                last_render_key = None
+
+            if now >= next_poll:
+                next_poll = now + poll_sec
+                track = spotify.current_track()
+                if track:
+                    if track.track_id != current_track_id:
+                        art_bytes = spotify.get_album_art(track.track_id, track.art_url)
+                        if art_bytes:
+                            try:
+                                current_art = Image.open(BytesIO(art_bytes))
+                            except OSError:
+                                current_art = None
+                        else:
+                            current_art = None
+                        current_track_id = track.track_id
+                    title = track.title or "Unknown title"
+                    artist = track.artist or "Unknown artist"
+                    render_key = (track.track_id, track.is_playing, title, artist)
+                    is_playing = track.is_playing
+                else:
+                    current_track_id = None
+                    current_art = None
+                    title = "No active device"
+                    artist = "Open Spotify on a device"
+                    render_key = ("none", False, title, artist)
+                    is_playing = False
+
+                if render_key != last_render_key:
+                    image, _, _ = _render_layout(
+                        epd, title, artist, current_art, is_playing
+                    )
+                    if needs_rotate:
+                        image = image.rotate(90, expand=True)
+                    epd.display(epd.getbuffer(image))
+                    last_render_key = render_key
+
+            sleep(0.05)
     except KeyboardInterrupt:
         pass
     finally:
