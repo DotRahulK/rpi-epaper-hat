@@ -13,7 +13,7 @@ set -euo pipefail
 
 redirect_url="${1:-}"
 
-python - <<'PY'
+python - "$redirect_url" <<'PY'
 import os
 import sys
 from spotipy.oauth2 import SpotifyOAuth
@@ -44,4 +44,4 @@ if not token_info:
     sys.exit(1)
 
 print("Token cached successfully.")
-PY "$redirect_url"
+PY
