@@ -9,7 +9,19 @@ from typing import Iterable, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 
-from config import EPD_MODEL_CANDIDATES
+from config import (
+    EPD_MODEL_CANDIDATES,
+    TOUCH_BACKEND,
+    TOUCH_I2C_ADDRESS,
+    TOUCH_I2C_BUS,
+    TOUCH_INT_PIN,
+    TOUCH_POLL_MS,
+    TOUCH_RESET_PIN,
+    TOUCH_X_MAX,
+    TOUCH_X_MIN,
+    TOUCH_Y_MAX,
+    TOUCH_Y_MIN,
+)
 from epd_driver import _load_epd_driver_candidates
 
 
@@ -131,14 +143,14 @@ def _find_touch_device() -> Optional[str]:
     return matches[0] if matches else None
 
 
-def _map_axis(value: int, min_value: int, max_value: int, size: int) -> int:
-    if max_value <= min_value:
+def _map_axis(value: int, min_value: Optional[int], max_value: Optional[int], size: int) -> int:
+    if min_value is None or max_value is None or max_value <= min_value:
         return value
     value = max(min_value, min(max_value, value))
     return int((value - min_value) * (size - 1) / (max_value - min_value))
 
 
-def _touch_loop(
+def _touch_loop_evdev(
     components: Iterable[Component], width: int, height: int, needs_rotate: bool
 ) -> None:
     try:
@@ -196,6 +208,62 @@ def _touch_loop(
                 print(f"Touched: background ({touch_x}, {touch_y})")
 
 
+
+def _touch_loop_gt1151(
+    components: Iterable[Component], width: int, height: int, needs_rotate: bool
+) -> None:
+    try:
+        from touch_gt1151 import GT1151
+    except ImportError as exc:
+        print(f"Touch input disabled: {exc}")
+        return
+
+    gt = GT1151(
+        bus=TOUCH_I2C_BUS,
+        address=TOUCH_I2C_ADDRESS,
+        reset_pin=TOUCH_RESET_PIN,
+        int_pin=TOUCH_INT_PIN,
+        poll_ms=TOUCH_POLL_MS,
+    )
+    try:
+        version = gt.init()
+        print(f"GT1151 init ok: {version}")
+    except Exception as exc:
+        gt.close()
+        print(f"Touch input disabled: GT1151 init failed: {exc}")
+        return
+
+    try:
+        while True:
+            points = gt.read_points()
+            if not points:
+                continue
+            touch_x = _map_axis(points[0].x, TOUCH_X_MIN, TOUCH_X_MAX, width)
+            touch_y = _map_axis(points[0].y, TOUCH_Y_MIN, TOUCH_Y_MAX, height)
+            if needs_rotate:
+                touch_x, touch_y = touch_y, (width - 1 - touch_x)
+            for component in components:
+                x0, y0, x1, y1 = component.box
+                if x0 <= touch_x <= x1 and y0 <= touch_y <= y1:
+                    print(f"Touched: {component.name} ({touch_x}, {touch_y})")
+                    break
+            else:
+                print(f"Touched: background ({touch_x}, {touch_y})")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        gt.close()
+
+
+def _run_touch_loop(
+    components: Iterable[Component], width: int, height: int, needs_rotate: bool
+) -> None:
+    if TOUCH_BACKEND.lower() == "gt1151":
+        _touch_loop_gt1151(components, width, height, needs_rotate)
+    else:
+        _touch_loop_evdev(components, width, height, needs_rotate)
+
+
 def main() -> None:
     epd = _load_epd_driver_candidates(EPD_MODEL_CANDIDATES)
     try:
@@ -215,7 +283,7 @@ def main() -> None:
         image = image.rotate(90, expand=True)
     epd.display(epd.getbuffer(image))
     try:
-        _touch_loop(components, image.width, image.height, needs_rotate)
+        _run_touch_loop(components, image.width, image.height, needs_rotate)
     except KeyboardInterrupt:
         pass
     finally:
@@ -225,3 +293,8 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
