@@ -112,15 +112,81 @@ def _render_layout(epd, is_playing: bool) -> Tuple[Image.Image, Iterable[Compone
         buttons_top + button_height,
     )
 
-    symbol_font = _load_font(max(12, int(button_height * 0.7)))
-    play_label = "||" if is_playing else ">"
-    for label, box in [(play_label, play_box), (">>", next_box), ("O+", like_box)]:
-        text = _fit_text(draw, label, symbol_font, button_width)
-        text_width = draw.textlength(text, font=symbol_font)
-        text_height = symbol_font.getbbox(text)[3]
-        text_x = box[0] + (button_width - text_width) / 2
-        text_y = box[1] + (button_height - text_height) / 2
-        draw.text((text_x, text_y), text, font=symbol_font, fill=0)
+    def _draw_play_symbol(box: Tuple[int, int, int, int]) -> None:
+        x0, y0, x1, y1 = box
+        pad_x = int((x1 - x0) * 0.22)
+        pad_y = int((y1 - y0) * 0.2)
+        points = [
+            (x0 + pad_x, y0 + pad_y),
+            (x1 - pad_x, (y0 + y1) // 2),
+            (x0 + pad_x, y1 - pad_y),
+        ]
+        draw.polygon(points, fill=0)
+
+    def _draw_pause_symbol(box: Tuple[int, int, int, int]) -> None:
+        x0, y0, x1, y1 = box
+        pad_x = int((x1 - x0) * 0.22)
+        pad_y = int((y1 - y0) * 0.2)
+        bar_width = max(1, int((x1 - x0) * 0.12))
+        gap = max(1, int((x1 - x0) * 0.08))
+        left_x0 = (x0 + x1 - (2 * bar_width + gap)) // 2
+        right_x0 = left_x0 + bar_width + gap
+        draw.rectangle(
+            (left_x0, y0 + pad_y, left_x0 + bar_width, y1 - pad_y), fill=0
+        )
+        draw.rectangle(
+            (right_x0, y0 + pad_y, right_x0 + bar_width, y1 - pad_y), fill=0
+        )
+
+    def _draw_next_symbol(box: Tuple[int, int, int, int]) -> None:
+        x0, y0, x1, y1 = box
+        pad_x = int((x1 - x0) * 0.18)
+        pad_y = int((y1 - y0) * 0.2)
+        mid_x = (x0 + x1) // 2
+        left_triangle = [
+            (x0 + pad_x, y0 + pad_y),
+            (mid_x, (y0 + y1) // 2),
+            (x0 + pad_x, y1 - pad_y),
+        ]
+        right_triangle = [
+            (mid_x, y0 + pad_y),
+            (x1 - pad_x, (y0 + y1) // 2),
+            (mid_x, y1 - pad_y),
+        ]
+        draw.polygon(left_triangle, fill=0)
+        draw.polygon(right_triangle, fill=0)
+
+    def _draw_like_symbol(box: Tuple[int, int, int, int]) -> None:
+        x0, y0, x1, y1 = box
+        size = min(x1 - x0, y1 - y0)
+        radius = int(size * 0.28)
+        center_x = (x0 + x1) // 2
+        center_y = (y0 + y1) // 2
+        circle_box = (
+            center_x - radius,
+            center_y - radius,
+            center_x + radius,
+            center_y + radius,
+        )
+        draw.ellipse(circle_box, outline=0, width=max(1, int(size * 0.05)))
+        plus_len = int(radius * 0.9)
+        draw.line(
+            (center_x - plus_len, center_y, center_x + plus_len, center_y),
+            fill=0,
+            width=max(1, int(size * 0.05)),
+        )
+        draw.line(
+            (center_x, center_y - plus_len, center_x, center_y + plus_len),
+            fill=0,
+            width=max(1, int(size * 0.05)),
+        )
+
+    if is_playing:
+        _draw_pause_symbol(play_box)
+    else:
+        _draw_play_symbol(play_box)
+    _draw_next_symbol(next_box)
+    _draw_like_symbol(like_box)
 
     components = [
         Component("Art", (left_x0, left_y0, left_x1, left_y1)),
