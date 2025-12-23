@@ -124,6 +124,9 @@ def _find_touch_device() -> Optional[str]:
     matches = glob.glob("/dev/input/by-path/*-event-touchscreen")
     if matches:
         return matches[0]
+    matches = glob.glob("/dev/input/by-path/*i2c*-event")
+    if matches:
+        return matches[0]
     matches = glob.glob("/dev/input/event*")
     return matches[0] if matches else None
 
