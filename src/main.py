@@ -87,9 +87,10 @@ def _render_layout(epd, is_playing: bool) -> Tuple[Image.Image, Iterable[Compone
     draw.text((right_x0, margin), title, font=title_font, fill=0)
     draw.text((right_x0, margin + 22), artist, font=artist_font, fill=0)
 
-    button_height = 22
     button_gap = 6
     buttons_top = margin + 44
+    buttons_bottom = height - margin
+    button_height = max(1, buttons_bottom - buttons_top)
     button_width = int((right_width - 2 * button_gap) / 3)
 
     play_box = (
@@ -111,11 +112,15 @@ def _render_layout(epd, is_playing: bool) -> Tuple[Image.Image, Iterable[Compone
         buttons_top + button_height,
     )
 
+    symbol_font = _load_font(max(12, int(button_height * 0.7)))
     play_label = "||" if is_playing else ">"
     for label, box in [(play_label, play_box), (">>", next_box), ("O+", like_box)]:
-        draw.rounded_rectangle(box, radius=4, outline=0, width=1)
-        text = _fit_text(draw, label, artist_font, button_width - 8)
-        draw.text((box[0] + 4, box[1] + 4), text, font=artist_font, fill=0)
+        text = _fit_text(draw, label, symbol_font, button_width)
+        text_width = draw.textlength(text, font=symbol_font)
+        text_height = symbol_font.getbbox(text)[3]
+        text_x = box[0] + (button_width - text_width) / 2
+        text_y = box[1] + (button_height - text_height) / 2
+        draw.text((text_x, text_y), text, font=symbol_font, fill=0)
 
     components = [
         Component("Art", (left_x0, left_y0, left_x1, left_y1)),
